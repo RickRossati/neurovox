@@ -1,0 +1,20 @@
+{
+  "_comment": "Copie para config.json e ajuste. Todos os campos sao opcionais.",
+
+  "language": "pt",
+  "model": "large-v3-turbo",
+
+  "engine": "cpu",
+  "_engine_note": "cpu = estavel em qualquer maquina. gpu = build Vulkan (mais rapido, mas pode falhar em alguns drivers/GPUs).",
+
+  "device": "default",
+  "_device_note": "'default' usa o microfone padrao do sistema. Ou use o nome de uma fonte do PipeWire (pactl list short sources), ex: uma Focusrite Scarlett.",
+
+  "channels": 1,
+  "channel": 0,
+  "_channels_note": "Para interfaces multicanal, grave N canais e extraia o indice 'channel' (0 = primeiro). Mic comum: channels=1, channel=0.",
+
+  "rate": 48000,
+  "threads": 8,
+  "hotkey": "Meta+H"
+}

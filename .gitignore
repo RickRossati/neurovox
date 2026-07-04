@@ -1,0 +1,20 @@
+# --- runtime / local (nao versionar) ---
+config.json
+*.log
+diag.log
+__pycache__/
+*.pyc
+*.core
+core.*
+
+# --- dependencias e artefatos (recriados pelo install.sh) ---
+whisper.cpp/
+venv/
+build/
+build-cpu/
+*.bin
+*.pcm
+*.wav
+
+# backups de editor
+*.bak
