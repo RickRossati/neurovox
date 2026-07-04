@@ -3,6 +3,8 @@
 
   "language": "pt",
   "model": "large-v3-turbo",
+  "model_live": "small",
+  "_model_live_note": "Modelo leve so para as parciais AO VIVO (aparecem rapido). O 'model' (turbo) fica na passada final. Use 'base' p/ ainda mais rapido, ou o mesmo valor de 'model' p/ desligar o modo hibrido.",
 
   "engine": "cpu",
   "_engine_note": "cpu = estavel em qualquer maquina. gpu = build Vulkan (mais rapido, mas pode falhar em alguns drivers/GPUs).",

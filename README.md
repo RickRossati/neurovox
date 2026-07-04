@@ -51,7 +51,8 @@ e instala o lançador. No fim ele mostra como registrar o atalho global.
 | Campo | Padrão | Descrição |
 |---|---|---|
 | `language` | `pt` | idioma do reconhecimento (`auto` para detectar) |
-| `model` | `large-v3-turbo` | modelo ggml do whisper.cpp |
+| `model` | `large-v3-turbo` | modelo da **passada final** (qualidade) |
+| `model_live` | `small` | modelo leve das **parciais ao vivo** (velocidade); `base` = ainda mais rápido; igual a `model` = desliga o híbrido |
 | `engine` | `cpu` | `cpu` (estável) ou `gpu` (Vulkan, mais rápido) |
 | `device` | `default` | mic padrão do sistema, ou o nome de uma fonte do PipeWire |
 | `channels` / `channel` | `1` / `0` | para interfaces multicanal: grava N canais e extrai um |
@@ -79,7 +80,9 @@ whisper-server (modelo quente) → texto ao vivo na UI
 - Captura com **`pw-record` nativo** (a camada de compat do PulseAudio pode entregar
   silêncio em algumas interfaces — PipeWire nativo resolve).
 - O modelo fica carregado num `whisper-server` local; a UI só manda o áudio e recebe texto.
-- Transcrição ao vivo = retranscreve o buffer a cada ~1.7 s e crava na passada final.
+- Transcrição ao vivo = **dois motores**: um modelo leve (`small`) transcreve o buffer
+  a cada ~1.7 s pras parciais aparecerem rápido, e o modelo principal (`large-v3-turbo`)
+  faz a passada final caprichada quando você para.
 
 ## 🗺️ Roadmap
 

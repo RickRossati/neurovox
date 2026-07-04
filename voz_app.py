@@ -49,8 +49,8 @@ SERVER_LOG = BASE / "whisper-server.log"
 def _load_config():
     """Le config.json (ao lado do app) por cima dos padroes. Tudo opcional."""
     cfg = {
-        "language": "pt", "model": "large-v3-turbo", "engine": "cpu",
-        "device": "default", "channels": 1, "channel": 0,
+        "language": "pt", "model": "large-v3-turbo", "model_live": "small",
+        "engine": "cpu", "device": "default", "channels": 1, "channel": 0,
         "rate": 48000, "threads": 8,
     }
     try:
@@ -71,6 +71,13 @@ REC_CHANNELS = int(CFG["channels"])
 MIC_CHANNEL = int(CFG["channel"])
 REC_RATE = int(CFG["rate"])
 THREADS = str(CFG["threads"])
+
+# Modelo leve p/ as parciais AO VIVO (aparecem rapido); o modelo principal
+# (turbo) fica so na passada final. Dois whisper-server: final@PORT, live@LIVE_PORT.
+_MODEL_LIVE_NAME = CFG.get("model_live", "small")
+MODEL_LIVE = WHISPER_DIR / "models" / f"ggml-{_MODEL_LIVE_NAME}.bin"
+LIVE_PORT = PORT + 1
+USE_LIVE = bool(_MODEL_LIVE_NAME) and _MODEL_LIVE_NAME != CFG["model"] and MODEL_LIVE.exists()
 
 
 def resolve_device():
@@ -126,14 +133,16 @@ def pick_mic_channel(raw_path, channels):
 
 # ----------------------------- whisper-server ------------------------------
 class WhisperServer:
-    def __init__(self):
+    def __init__(self, model, port):
+        self.model = model
+        self.port = port
         self.proc = None
 
     def already_running(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(0.3)
         try:
-            s.connect((HOST, PORT))
+            s.connect((HOST, self.port))
             return True
         except OSError:
             return False
@@ -149,8 +158,8 @@ class WhisperServer:
         except OSError:
             log = subprocess.DEVNULL
         self.proc = subprocess.Popen(
-            [str(WHISPER_SERVER), "-m", str(MODEL), "-l", LANG, "-nt",
-             "-t", THREADS, "--host", HOST, "--port", str(PORT)],
+            [str(WHISPER_SERVER), "-m", str(self.model), "-l", LANG, "-nt",
+             "-t", THREADS, "--host", HOST, "--port", str(self.port)],
             stdout=log, stderr=log,
         )
 
@@ -196,9 +205,9 @@ class ReadyThread(QThread):
 _server_lock = threading.Lock()
 
 
-def transcribe_buffer(raw_path, channels):
-    """Extrai o canal do mic do PCM cru, normaliza e transcreve no whisper-server.
-    Usa arquivo temp unico p/ poder rodar passadas simultaneas sem colidir."""
+def transcribe_buffer(raw_path, channels, port):
+    """Extrai o canal do mic do PCM cru, normaliza e transcreve no whisper-server
+    da porta dada. Usa arquivo temp unico p/ passadas simultaneas nao colidirem."""
     fd, mono = tempfile.mkstemp(prefix="voz-m-", suffix=".wav")
     os.close(fd)
     try:
@@ -210,10 +219,10 @@ def transcribe_buffer(raw_path, channels):
              "-ar", "16000", "-ac", "1", mono],
             check=True,
         )
-        with _server_lock:  # 1 requisicao por vez ao motor
+        with _server_lock:  # 1 requisicao por vez (evita thrash de CPU/crash)
             with open(mono, "rb") as f:
                 r = requests.post(
-                    f"http://{HOST}:{PORT}/inference",
+                    f"http://{HOST}:{port}/inference",
                     files={"file": ("audio.wav", f, "audio/wav")},
                     data={"response_format": "text", "language": LANG,
                           "temperature": "0", "no_timestamps": "true"},
@@ -236,15 +245,16 @@ class Worker(QThread):
     done = Signal(str, bool)
     failed = Signal(str, bool)
 
-    def __init__(self, raw_path, channels, final):
+    def __init__(self, raw_path, channels, final, port):
         super().__init__()
         self.raw_path = raw_path
         self.channels = channels
         self.final = final
+        self.port = port
 
     def run(self):
         try:
-            text = transcribe_buffer(self.raw_path, self.channels)
+            text = transcribe_buffer(self.raw_path, self.channels, self.port)
         except subprocess.CalledProcessError as e:
             self.failed.emit(f"Falha ao converter audio: {e}", self.final)
             return
@@ -334,9 +344,10 @@ class MicButton(QPushButton):
 
 # ----------------------------- janela --------------------------------------
 class MainWindow(QWidget):
-    def __init__(self, server: WhisperServer):
+    def __init__(self, server, live_server):
         super().__init__()
         self.server = server
+        self.live_server = live_server
         self.target, self.channels = resolve_device()
         self.rec_proc = None
         self.raw_path = None
@@ -424,7 +435,9 @@ class MainWindow(QWidget):
             self.stop_record()
 
     def start_record(self):
-        self.server.ensure_running()  # ressuscita o motor se ele tiver caido
+        self.server.ensure_running()          # motor final (turbo)
+        if self.live_server:
+            self.live_server.ensure_running()  # motor ao vivo (small)
         fd, self.raw_path = tempfile.mkstemp(prefix="voz-", suffix=".pcm")
         os.close(fd)
         try:
@@ -460,7 +473,9 @@ class MainWindow(QWidget):
         if size < int(REC_RATE * self.channels * 2 * 0.6):  # ~0.6s de audio
             return
         self._partial_busy = True
-        self.partial_worker = Worker(self.raw_path, self.channels, final=False)
+        live_port = LIVE_PORT if USE_LIVE else PORT
+        self.partial_worker = Worker(self.raw_path, self.channels,
+                                     final=False, port=live_port)
         self.partial_worker.done.connect(self.on_result)
         self.partial_worker.failed.connect(self.on_worker_fail)
         self.partial_worker.start()
@@ -477,7 +492,7 @@ class MainWindow(QWidget):
         self.rec_proc = None
         self.mic.set_state(MicButton.BUSY)
         self.status.setText("Finalizando…")
-        self.final_worker = Worker(self.raw_path, self.channels, final=True)
+        self.final_worker = Worker(self.raw_path, self.channels, final=True, port=PORT)
         self.final_worker.done.connect(self.on_result)
         self.final_worker.failed.connect(self.on_worker_fail)
         self.final_worker.start()
@@ -538,7 +553,7 @@ class MainWindow(QWidget):
         if not self.raw_path:
             self.mic.set_state(MicButton.IDLE)
             return
-        self.final_worker = Worker(self.raw_path, self.channels, final=True)
+        self.final_worker = Worker(self.raw_path, self.channels, final=True, port=PORT)
         self.final_worker.done.connect(self.on_result)
         self.final_worker.failed.connect(self.on_worker_fail)
         self.final_worker.start()
@@ -572,6 +587,8 @@ class MainWindow(QWidget):
     def quit_app(self):
         self._really_quit = True
         self.server.stop()
+        if self.live_server:
+            self.live_server.stop()
         QApplication.quit()
 
     def keyPressEvent(self, ev):
@@ -638,10 +655,13 @@ def main():
     app.setApplicationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
 
-    server = WhisperServer()
+    server = WhisperServer(MODEL, PORT)
+    live_server = WhisperServer(MODEL_LIVE, LIVE_PORT) if USE_LIVE else None
     server.start()
+    if live_server:
+        live_server.start()
 
-    win = MainWindow(server)
+    win = MainWindow(server, live_server)
 
     # servidor local p/ instancia unica (Meta+H -> mostra a janela existente)
     QLocalServer.removeServer(SOCKET_NAME)
@@ -673,6 +693,8 @@ def main():
         tray.show()
 
     app.aboutToQuit.connect(server.stop)
+    if live_server:
+        app.aboutToQuit.connect(live_server.stop)
     win.show_raise()
     return app.exec()
 

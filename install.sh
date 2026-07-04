@@ -7,7 +7,8 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-MODEL="${NEUROVOX_MODEL:-large-v3-turbo}"
+MODEL="${NEUROVOX_MODEL:-large-v3-turbo}"        # passada final (qualidade)
+MODEL_LIVE="${NEUROVOX_MODEL_LIVE:-small}"       # parciais ao vivo (velocidade)
 WANT_GPU=0
 [ "${1:-}" = "--gpu" ] && WANT_GPU=1
 
@@ -54,8 +55,13 @@ fi
 
 # --- 4. modelo ---
 if [ ! -f "$DIR/whisper.cpp/models/ggml-$MODEL.bin" ]; then
-  say "Baixando modelo: $MODEL (pode ser ~1.6 GB)"
+  say "Baixando modelo final: $MODEL (pode ser ~1.6 GB)"
   ( cd "$DIR/whisper.cpp" && bash models/download-ggml-model.sh "$MODEL" )
+fi
+if [ -n "$MODEL_LIVE" ] && [ "$MODEL_LIVE" != "$MODEL" ] && \
+   [ ! -f "$DIR/whisper.cpp/models/ggml-$MODEL_LIVE.bin" ]; then
+  say "Baixando modelo leve p/ ao vivo: $MODEL_LIVE"
+  ( cd "$DIR/whisper.cpp" && bash models/download-ggml-model.sh "$MODEL_LIVE" )
 fi
 
 # --- 5. ambiente Python ---
